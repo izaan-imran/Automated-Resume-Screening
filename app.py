@@ -27,11 +27,13 @@ st.markdown("""
 # ─────────────────────────────────────────────
 # LOAD MODELS
 # ─────────────────────────────────────────────
+import joblib  # <--- Ye line add karein
+
 @st.cache_resource
 def load_models():
     try:
-        with open("models.pkl", "rb") as f:
-            data = pickle.load(f)
+        # pickle.load ki jagah joblib.load use karein
+        data = joblib.load("models.pkl") 
         return data, True
     except Exception as e:
         return e, False
