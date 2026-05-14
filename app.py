@@ -4,14 +4,10 @@ from collections import Counter
 import nltk
 from nltk.corpus import stopwords
 import pandas as pd
-import plotly.express as px  # Professional Graphs ke liye
+import plotly.express as px
 
-# Page Config
 st.set_page_config(page_title="AI Rsume Screening | Resume Intelligence", page_icon="🎯", layout="wide")
 
-# ─────────────────────────────────────────────
-# STYLES & ASSETS
-# ─────────────────────────────────────────────
 st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
@@ -22,18 +18,17 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.05); 
     }
     </style>
-    """, unsafe_allow_html=True) # <--- Corrected parameter name
+    """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
 # LOAD MODELS
 # ─────────────────────────────────────────────
-import joblib  # <--- Ye line add karein
+import joblib
 
 @st.cache_resource
 def load_models():
     try:
-        # pickle.load ki jagah joblib.load use karein
-        data = joblib.load("models.pkl") 
+        data = joblib.load("models.pkl")
         return data, True
     except Exception as e:
         return e, False
@@ -79,6 +74,41 @@ def extract_text(file):
         return file.read().decode("utf-8", errors="ignore")
 
 # ─────────────────────────────────────────────
+# ✅ FIX 1 — RULE-BASED OVERRIDE
+# Ye words agar resume mein hon to IT fix ho jaata hai
+# ─────────────────────────────────────────────
+STRONG_IT_SIGNALS = [
+    'python', 'machine learning', 'data science', 'artificial intelligence',
+    'deep learning', 'sql', 'data analysis', 'scikit', 'tensorflow',
+    'pytorch', 'pandas', 'numpy', 'data scientist', 'ml engineer',
+    'data engineer', 'nlp', 'neural network', 'big data', 'hadoop',
+    'spark', 'r programming', 'statistics', 'algorithm', 'data visualization',
+    'jupyter', 'github', 'git', 'database', 'data cleaning'
+]
+
+# Ye words IT resume mein hon lekin inhe ignore karo
+DIGITAL_MEDIA_NOISE = [
+    'digital content', 'content creation', 'social media marketing',
+    'graphic design', 'seo', 'marketing campaign', 'influencer',
+    'content strategy', 'google adwords', 'ppc', 'facebook ads'
+]
+
+def rule_based_check(raw_text):
+    """
+    ML models se pehle ye check chalta hai.
+    Agar 3+ strong IT signals milein aur DM noise kam ho
+    to seedha INFORMATION-TECHNOLOGY return karo.
+    """
+    text_lower = raw_text.lower()
+    it_count = sum(1 for kw in STRONG_IT_SIGNALS if kw in text_lower)
+    dm_count = sum(1 for kw in DIGITAL_MEDIA_NOISE if kw in text_lower)
+    
+    if it_count >= 3 and it_count > dm_count:
+        return 'INFORMATION-TECHNOLOGY', it_count, dm_count
+    
+    return None, it_count, dm_count
+
+# ─────────────────────────────────────────────
 # MAIN APP INTERFACE
 # ─────────────────────────────────────────────
 st.sidebar.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=80)
@@ -95,68 +125,94 @@ if menu == "🔍 Resume Predictor":
         if st.button("Start AI Analysis"):
             all_results = []
             
-            for f in uploaded_files: # Limit to 5
+            for f in uploaded_files:
                 with st.spinner(f"Analyzing {f.name}..."):
                     raw_text = extract_text(f)
-                    if not raw_text.strip(): continue
+                    if not raw_text.strip():
+                        continue
                     
                     cleaned = clean_text(raw_text)
                     vec = tfidf.transform([cleaned])
                     
-                    # Individual Model Predictions
+                    # ── Individual Model Predictions ──
                     individual_preds = {}
                     for name, model in models_dict.items():
                         p = model.predict(vec)[0]
                         individual_preds[name] = le.inverse_transform([p])[0]
                     
-                    # Final Voting
-                    votes = list(individual_preds.values())
-                    final_cat = Counter(votes).most_common(1)[0][0]
-                    conf = (votes.count(final_cat) / len(votes)) * 100
+                    # ── ✅ FIX 2 — Voting se PEHLE rule check karo ──
+                    rule_result, it_count, dm_count = rule_based_check(raw_text)
+                    
+                    if rule_result:
+                        # Rule ne override kiya — IT confirm hai
+                        final_cat   = rule_result
+                        conf        = 100.0
+                        rule_used   = True
+                    else:
+                        # Normal majority voting
+                        votes       = list(individual_preds.values())
+                        final_cat   = Counter(votes).most_common(1)[0][0]
+                        conf        = (votes.count(final_cat) / len(votes)) * 100
+                        rule_used   = False
                     
                     all_results.append({
-                        "filename": f.name,
-                        "final": final_cat,
+                        "filename":   f.name,
+                        "final":      final_cat,
                         "confidence": conf,
-                        "details": individual_preds
+                        "details":    individual_preds,
+                        "rule_used":  rule_used,
+                        "it_signals": it_count,
+                        "dm_noise":   dm_count,
                     })
 
-            # --- DISPLAY RESULTS ---
+            # ── DISPLAY RESULTS ──
             if all_results:
                 st.divider()
                 res_df = pd.DataFrame(all_results)
                 
-                # 1. Summary Cards
+                # Summary Cards
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Processed", len(all_results))
                 c2.metric("Top Category", res_df['final'].mode()[0])
                 c3.metric("Avg. Confidence", f"{res_df['confidence'].mean():.0f}%")
 
-                # 2. Advanced Visual (Plotly)
+                # Chart
                 st.subheader("📊 Category Distribution")
-                fig = px.bar(res_df['final'].value_counts().reset_index(), 
-                             x='final', y='count', 
-                             labels={'final': 'Category', 'count': 'Number of Resumes'},
-                             color='final', color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig = px.bar(
+                    res_df['final'].value_counts().reset_index(),
+                    x='final', y='count',
+                    labels={'final': 'Category', 'count': 'Number of Resumes'},
+                    color='final',
+                    color_discrete_sequence=px.colors.qualitative.Pastel
+                )
                 st.plotly_chart(fig, use_container_width=True)
 
-                # 3. Detailed Breakdown
+                # Detailed Breakdown
                 st.subheader("📄 Candidate Analysis")
                 for res in all_results:
                     with st.expander(f"Analysis for: {res['filename']} - **{res['final']}** ({res['confidence']:.0f}%)"):
+                        
+                        # ✅ Model predictions dikhao
                         cols = st.columns(len(models_dict))
                         for i, (m_name, m_pred) in enumerate(res['details'].items()):
                             is_match = "✅" if m_pred == res['final'] else "❌"
                             cols[i].markdown(f"**{m_name}**\n\n{is_match} {m_pred}")
                         
-                        if res['confidence'] < 100:
+                        # ✅ Rule override notice
+                        if res['rule_used']:
+                            st.success(
+                                f"✅ Smart Override: {res['it_signals']} strong IT signals detected "
+                                f"(python, ml, data science, etc.) — category corrected to "
+                                f"**INFORMATION-TECHNOLOGY**"
+                            )
+                        elif res['confidence'] < 100:
                             st.warning("Note: Models disagreed on this file. Manual review recommended.")
 
     elif not uploaded_files:
         st.info("Please upload a resume to begin analysis.")
 
 # ─────────────────────────────────────────────
-# BIAS REPORT PAGE (IMPROVED)
+# BIAS REPORT PAGE
 # ─────────────────────────────────────────────
 else:
     st.title("⚖️ Bias & Ethics Audit")
@@ -169,6 +225,7 @@ else:
         st.markdown("""
         *   **Feature Stripping:** Our cleaner automatically removes names, emails, and contact details before prediction.
         *   **Ensemble Logic:** We use 4 different algorithms to ensure a single model's bias doesn't dominate the result.
+        *   **Smart Override:** Rule-based IT detection prevents misclassification of Data Science resumes as Digital Media.
         *   **Stopword Filtering:** Terms that don't relate to skills are ignored.
         """)
     
