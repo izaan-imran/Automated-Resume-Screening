@@ -35,7 +35,7 @@ A critical challenge was the misclassification of **Data Science** resumes as **
 ---
 
 ## 🚀 Deployment & Links
-* **Live Application:** [[Paste your Streamlit link here]](https://automated-resume-screening-1.streamlit.app/)
+* **Live Application:** (https://automated-resume-screening-1.streamlit.app/)
   
 ---
 
